@@ -4,23 +4,26 @@
 
 package com.phasmidsoftware.dsaipg.util;
 
+import com.phasmidsoftware.dsaipg.adt.pq.PriorityQueue;
+import com.phasmidsoftware.dsaipg.adt.pq.FourAryHeap;
+import com.phasmidsoftware.dsaipg.adt.pq.FibonacciHeap;
+
+import java.util.*;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.PrintWriter;
+import com.phasmidsoftware.dsaipg.adt.pq.PQException;
 
-import static com.phasmidsoftware.dsaipg.util.Utilities.formatWhole;
 
-import java.util.Arrays;
-import java.util.Random;
-import java.util.function.Consumer;
 
 /**
  * This class implements a simple Benchmark utility for measuring the running time of algorithms.
- * It is part of the repository for the INFO6205 class, taught by Prof. Robin Hillyard
- * <p>
- * It requires Java 8 as it uses function types, in particular, UnaryOperator&lt;T&gt; (a function of T => T),
- * Consumer&lt;T&gt; (essentially a function of T => Void) and Supplier&lt;T&gt; (essentially a function of Void => T).
+ * It is part of the repository for the INFO6205 class, taught by Prof. Robin Hillyard.
+ *
  * <p>
  * In general, the benchmark class handles three phases of a "run:"
  * <ol>
@@ -28,10 +31,9 @@ import java.util.function.Consumer;
  *     <li>The study function itself (field fRun) -- assumed to be a mutating function since it does not return a result;</li>
  *     <li>The post-function which cleans up and/or checks the results of the study function (field fPost) (may be null).</li>
  * </ol>
- * <p>
- * Note that the clock does not run during invocations of the pre-function and the post-function (if any).
+ * </p>
  *
- * @param <T> The generic type T is that of the input to the function f which you will pass in to the constructor.
+ * @param <T> The generic type T is that of the input to the function f which you will pass into the constructor.
  */
 public class Benchmark_Timer<T> implements Benchmark<T> {
 
@@ -53,7 +55,6 @@ public class Benchmark_Timer<T> implements Benchmark<T> {
      * @return the average number of milliseconds taken for each run of function f.
      */
     public double runFromSupplier(Supplier<T> supplier, int m) {
-        logger.info("Begin run: " + description + " with " + formatWhole(m) + " runs");
         final Function<T, T> function = t -> {
             fRun.accept(t);
             return t;
@@ -67,15 +68,6 @@ public class Benchmark_Timer<T> implements Benchmark<T> {
 
     /**
      * Constructor for a Benchmark_Timer with the option of specifying all three functions.
-     *
-     * @param description the description of the benchmark.
-     * @param fPre        a function of T => T.
-     *                    Function fPre is run before each invocation of fRun (but with the clock stopped).
-     *                    The result of fPre (if any) is passed to fRun.
-     * @param fRun        a Consumer function (i.e. a function of T => Void).
-     *                    Function fRun is the function whose timing you want to measure. For example, you might create a function which sorts an array.
-     *                    When you create a lambda defining fRun, you must return "null."
-     * @param fPost       a Consumer function (i.e. a function of T => Void).
      */
     public Benchmark_Timer(String description, UnaryOperator<T> fPre, Consumer<T> fRun, Consumer<T> fPost) {
         this.description = description;
@@ -85,14 +77,7 @@ public class Benchmark_Timer<T> implements Benchmark<T> {
     }
 
     /**
-     * Constructor for a Benchmark_Timer with the option of specifying all three functions.
-     *
-     * @param description the description of the benchmark.
-     * @param fPre        a function of T => T.
-     *                    Function fPre is run before each invocation of fRun (but with the clock stopped).
-     *                    The result of fPre (if any) is passed to fRun.
-     * @param fRun        a Consumer function (i.e. a function of T => Void).
-     *                    Function fRun is the function whose timing you want to measure. For example, you might create a function which sorts an array.
+     * Constructor for a Benchmark_Timer with the option of specifying a pre-function and run function.
      */
     public Benchmark_Timer(String description, UnaryOperator<T> fPre, Consumer<T> fRun) {
         this(description, fPre, fRun, null);
@@ -100,12 +85,6 @@ public class Benchmark_Timer<T> implements Benchmark<T> {
 
     /**
      * Constructor for a Benchmark_Timer with only fRun and fPost Consumer parameters.
-     *
-     * @param description the description of the benchmark.
-     * @param fRun        a Consumer function (i.e. a function of T => Void).
-     *                    Function fRun is the function whose timing you want to measure. For example, you might create a function which sorts an array.
-     *                    When you create a lambda defining fRun, you must return "null."
-     * @param fPost       a Consumer function (i.e. a function of T => Void).
      */
     public Benchmark_Timer(String description, Consumer<T> fRun, Consumer<T> fPost) {
         this(description, null, fRun, fPost);
@@ -113,10 +92,6 @@ public class Benchmark_Timer<T> implements Benchmark<T> {
 
     /**
      * Constructor for a Benchmark_Timer where only the (timed) run function is specified.
-     *
-     * @param description the description of the benchmark.
-     * @param f           a Consumer function (i.e. a function of T => Void).
-     *                    Function f is the function whose timing you want to measure. For example, you might create a function which sorts an array.
      */
     public Benchmark_Timer(String description, Consumer<T> f) {
         this(description, null, f, null);
@@ -127,78 +102,144 @@ public class Benchmark_Timer<T> implements Benchmark<T> {
     private final Consumer<T> fRun;
     private final Consumer<T> fPost;
 
-    final static LazyLogger logger = new LazyLogger(Benchmark_Timer.class);
+    private static final Random random = new Random();
+    private static final int M = 4095; // Max heap size
+    private static final int[] INPUT_SIZES = {1000, 2000, 4000, 8000, 16000};
 
-    private static final Random random = new Random(42); // Fixed seed for reproducibility
+    private static final Map<String, List<Double>> insertionTimesMap = new HashMap<>();
+    private static final Map<String, List<Double>> removalTimesMap = new HashMap<>();
 
     public static void main(String[] args) {
-        int initialSize = 128; // Starting size of the array
-        Consumer<Integer[]> sortMethod = Benchmark_Timer::insertionSort; // Sorting method as a Consumer
+        System.out.println("\n--- Heap Benchmarking ---");
 
-        for (int i = 0; i < 5; i++) {
-            int size = initialSize << i; // Double the array size in each iteration
-            Integer[] randomArray = createRandomArray(size);
-            Integer[] sortedArray = createSortedArray(size);
-            Integer[] partiallyOrderedArray = createPartiallyOrderedArray(size);
-            Integer[] reversedArray = createReversedArray(size);
+        List<Supplier<Object>> heapSuppliers = Arrays.asList(
+                () -> new PriorityQueue<Integer>(M, true, Comparator.naturalOrder(), false),
+                () -> new PriorityQueue<Integer>(M, true, Comparator.naturalOrder(), true),
+                () -> new FourAryHeap<Integer>(M, Comparator.naturalOrder(), false, false),
+                () -> new FourAryHeap<Integer>(M, Comparator.naturalOrder(), true, true),
+                FibonacciHeap::new
+        );
 
-            System.out.println("Array size: " + size);
-            benchmark("Random Array", randomArray, sortMethod);
-            benchmark("Sorted Array", sortedArray, sortMethod);
-            benchmark("Partially Ordered Array", partiallyOrderedArray, sortMethod);
-            benchmark("Reversed Array", reversedArray, sortMethod);
-        }
-    }
+        List<String> heapNames = Arrays.asList(
+                "BinaryHeap", "BinaryHeapFloyd", "4AryHeap", "4AryHeapFloyd", "FibonacciHeap"
+        );
 
-    private static void benchmark(String description, Integer[] array, Consumer<Integer[]> sortMethod) {
-        Benchmark_Timer<Integer[]> timer = new Benchmark_Timer<>(description, null, sortMethod, null);
-        double time = timer.runFromSupplier(() -> Arrays.copyOf(array, array.length), 10);
-        System.out.println(description + ": " + time + " ms");
-    }
+        for (int i = 0; i < heapSuppliers.size(); i++) {
+            String heapName = heapNames.get(i);
+            Supplier<Object> heapSupplier = heapSuppliers.get(i);
 
-    private static Integer[] createRandomArray(int size) {
-        return random.ints(size, 0, 1000).boxed().toArray(Integer[]::new);
-    }
+            List<Double> insertionTimes = new ArrayList<>();
+            List<Double> removalTimes = new ArrayList<>();
 
-    private static Integer[] createSortedArray(int size) {
-        Integer[] array = createRandomArray(size);
-        Arrays.sort(array);
-        return array;
-    }
+            for (int size : INPUT_SIZES) {
+                System.out.println("\nHeap: " + heapName + " | Input Size: " + size);
 
-    private static Integer[] createPartiallyOrderedArray(int size) {
-        Integer[] array = createSortedArray(size);
-        // Shuffle segments of the array to create partial order
-        int segmentSize = size / 10; // Arbitrary segment size
-        for (int i = 0; i < size; i += segmentSize) {
-            for (int j = i; j < Math.min(i + segmentSize, size) - 1; j += 2) {
-                int temp = array[j];
-                array[j] = array[j + 1];
-                array[j + 1] = temp;
+                // Measure Insertion Time
+                Benchmark_Timer<Object> insertionBenchmark = new Benchmark_Timer<>(
+                        heapName + " Insertions",
+                        heap -> benchmarkHeap(heapName, heapSupplier, size, 0)
+                );
+                double insertionTime = insertionBenchmark.runFromSupplier(heapSupplier, 10);
+                insertionTimes.add(insertionTime);
+
+                // Measure Removal Time
+                Benchmark_Timer<Object> removalBenchmark = new Benchmark_Timer<>(
+                        heapName + " Removals",
+                        heap -> benchmarkHeap(heapName, heapSupplier, 0, size / 4) // 25% removals
+                );
+                double removalTime = removalBenchmark.runFromSupplier(heapSupplier, 10);
+                removalTimes.add(removalTime);
+
+                System.out.printf("Input Size: %d | Insertion Time: %.6f ms | Removal Time: %.6f ms%n",
+                        size, insertionTime, removalTime);
             }
+
+            insertionTimesMap.put(heapName, insertionTimes);
+            removalTimesMap.put(heapName, removalTimes);
         }
-        return array;
+
+        exportToCSV();
     }
 
-    private static Integer[] createReversedArray(int size) {
-        Integer[] array = createSortedArray(size);
-        for (int i = 0; i < size / 2; i++) {
-            int temp = array[i];
-            array[i] = array[size - i - 1];
-            array[size - i - 1] = temp;
-        }
-        return array;
-    }
+    static void benchmarkHeap(String description, Supplier<Object> heapSupplier, int inserts, int removes) {
+        Object heapInstance = heapSupplier.get();
+        int nextPrint = 1000;
 
-    private static void insertionSort(Integer[] array) {
-        for (int i = 1; i < array.length; i++) {
-            int current = array[i];
-            int j = i - 1;
-            while (j >= 0 && array[j] > current) {
-                array[j + 1] = array[j];
-                j--;
+        if (heapInstance instanceof PriorityQueue) {
+            PriorityQueue<Integer> pq = (PriorityQueue<Integer>) heapInstance;
+
+            for (int i = 1; i <= inserts; i++) {
+                pq.give(random.nextInt());
+                if (i == nextPrint || i == inserts) {
+                    System.out.println(description + " - Insertions completed: " + i);
+                    nextPrint *= 2;
+                }
             }
-            array[j + 1] = current;
+
+            for (int i = 1; i <= removes; i++) {
+                if (!pq.isEmpty()) {
+                    try {
+                        pq.take();
+                    } catch (PQException e) {
+                        System.err.println("PriorityQueue error during removal: " + e.getMessage());
+                    }
+                }
+            }
+        } else if (heapInstance instanceof FourAryHeap) {
+            FourAryHeap<Integer> faHeap = (FourAryHeap<Integer>) heapInstance;
+
+            for (int i = 1; i <= inserts; i++) {
+                faHeap.insert(random.nextInt());
+                if (i == nextPrint || i == inserts) {
+                    System.out.println(description + " - Insertions completed: " + i);
+                    nextPrint *= 2;
+                }
+            }
+
+            for (int i = 1; i <= removes; i++)
+                if (faHeap.size() > 0) faHeap.removeTop();
+
+        } else if (heapInstance instanceof FibonacciHeap) {
+            FibonacciHeap<Integer> fibHeap = (FibonacciHeap<Integer>) heapInstance;
+
+            for (int i = 1; i <= inserts; i++) {
+                fibHeap.insert(random.nextInt());
+                if (i == nextPrint || i == inserts) {
+                    System.out.println(description + " - Insertions completed: " + i);
+                    nextPrint *= 2;
+                }
+            }
+
+            for (int i = 1; i <= removes; i++)
+                if (fibHeap.size() > 0) fibHeap.removeMin();
+        }
+    }
+
+    private static void exportToCSV() {
+        try (PrintWriter writer = new PrintWriter(new File("loglog_benchmark_results.csv"))) {
+            writer.print("InputSize");
+
+            for (String heapName : insertionTimesMap.keySet()) {
+                writer.print("," + heapName + "_Insertion");
+                writer.print("," + heapName + "_Removal");
+            }
+            writer.println();
+
+            for (int i = 0; i < INPUT_SIZES.length; i++) {
+                writer.print(INPUT_SIZES[i]);
+
+                for (String heapName : insertionTimesMap.keySet()) {
+                    writer.printf(",%.6f,%.6f",
+                            insertionTimesMap.get(heapName).get(i),
+                            removalTimesMap.get(heapName).get(i));
+                }
+                writer.println();
+            }
+
+            System.out.println("CSV Exported Successfully: loglog_benchmark_results.csv");
+
+        } catch (FileNotFoundException e) {
+            System.err.println("Error writing CSV: " + e.getMessage());
         }
     }
 }
