@@ -97,7 +97,7 @@ public class MergeSort<X extends Comparable<X>> extends SortWithComparableHelper
         }
     }
 
-    // CONSIDER combine with MergeSortBasic, perhaps.
+
     private void merge(X[] sorted, X[] result, int from, int mid, int to) {
         int i = from;
         int j = mid;
